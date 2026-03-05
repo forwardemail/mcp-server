@@ -1,7 +1,7 @@
 {
   "name": "@forwardemail/mcp-server",
   "description": "Model Context Protocol (MCP) server for Forward Email. Connect AI to your inbox.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Forward Email LLC <support@forwardemail.net> (https://forwardemail.net)",
   "bin": {
     "mcp-server": "./bin/mcp-server.js"
