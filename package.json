@@ -60,6 +60,9 @@
     "tabWidth": 2,
     "singleQuote": true
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/forwardemail/mcp-server.git"
