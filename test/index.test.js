@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {spawn} = require('node:child_process');
 const path = require('node:path');
+const axios = require('axios');
+const {getTools} = require('../lib/tools.js');
 
 const cliPath = path.resolve(__dirname, '../bin/mcp-server.js');
 
@@ -568,7 +570,7 @@ test('MCP Server', async (t) => {
           listDomains: ['sort', 'page', 'limit'],
           listAliases: ['sort', 'page', 'limit'],
           listEmails: ['q', 'domain', 'sort', 'page', 'limit'],
-          listMessages: ['folder', 'subject', 'q'],
+          listMessages: ['folder', 'subject', 'q', 'metadata_only'],
           getMessage: ['eml', 'attachments'],
           listFolders: ['subscribed'],
         };
@@ -588,6 +590,153 @@ test('MCP Server', async (t) => {
         }
       } finally {
         killChild(child);
+      }
+    },
+  );
+
+  await t.test(
+    'listMessages exposes Anthropic result-size metadata and metadata_only input',
+    async () => {
+      const child = runCli();
+      try {
+        await initializeServer(child);
+        const result = await listTools(child);
+        const listMessagesTool = result.tools.find(
+          (tool) => tool.name === 'listMessages',
+        );
+
+        assert(listMessagesTool, 'Tool listMessages not found');
+        assert.strictEqual(
+          listMessagesTool._meta['anthropic/maxResultSizeChars'],
+          500_000,
+        );
+        assert.strictEqual(
+          listMessagesTool.inputSchema.properties.metadata_only.type,
+          'boolean',
+        );
+      } finally {
+        killChild(child);
+      }
+    },
+  );
+
+  await t.test(
+    'listMessages metadata_only strips body and attachment content',
+    async () => {
+      const originalCreate = axios.create;
+      axios.create = () => ({
+        get: async () => ({
+          data: {
+            results: [
+              {
+                id: 'msg_1',
+                uid: 123,
+                subject: 'Hello',
+                from: [{address: 'sender@example.com'}],
+                to: [{address: 'user@example.com'}],
+                date: '2026-04-08T00:00:00.000Z',
+                size: 42,
+                has_attachment: true,
+                flags: ['\\Seen'],
+                folder: 'INBOX',
+                text: 'hidden body',
+                html: '<p>hidden body</p>',
+                attachments: [{filename: 'secret.txt', content: 'hidden'}],
+              },
+            ],
+          },
+        }),
+      });
+
+      try {
+        const tools = getTools();
+        const result = await tools.listMessages.invoke({
+          folder: 'INBOX',
+          alias_username: 'test@example.com',
+          alias_password: 'fake-password',
+          metadata_only: true,
+        });
+
+        assert.deepStrictEqual(result, {
+          results: [
+            {
+              id: 'msg_1',
+              uid: 123,
+              subject: 'Hello',
+              from: [{address: 'sender@example.com'}],
+              to: [{address: 'user@example.com'}],
+              date: '2026-04-08T00:00:00.000Z',
+              size: 42,
+              has_attachment: true,
+              flags: ['\\Seen'],
+              folder: 'INBOX',
+            },
+          ],
+        });
+      } finally {
+        axios.create = originalCreate;
+      }
+    },
+  );
+
+  await t.test(
+    'listMessages automatically trims oversized results to metadata-only output',
+    async () => {
+      const originalCreate = axios.create;
+      axios.create = () => ({
+        get: async () => ({
+          data: {
+            results: [
+              {
+                id: 'msg_1',
+                uid: 123,
+                subject: 'Hello',
+                from: [{address: 'sender@example.com'}],
+                to: [{address: 'user@example.com'}],
+                date: '2026-04-08T00:00:00.000Z',
+                size: 42,
+                has_attachment: true,
+                flags: ['\\Seen'],
+                folder: 'INBOX',
+                text: 'x'.repeat(600_000),
+                attachments: [
+                  {
+                    filename: 'secret.txt',
+                    content: 'y'.repeat(10_000),
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+
+      try {
+        const tools = getTools();
+        const result = await tools.listMessages.invoke({
+          folder: 'INBOX',
+          alias_username: 'test@example.com',
+          alias_password: 'fake-password',
+        });
+
+        assert.deepStrictEqual(result, {
+          results: [
+            {
+              id: 'msg_1',
+              uid: 123,
+              subject: 'Hello',
+              from: [{address: 'sender@example.com'}],
+              to: [{address: 'user@example.com'}],
+              date: '2026-04-08T00:00:00.000Z',
+              size: 42,
+              has_attachment: true,
+              flags: ['\\Seen'],
+              folder: 'INBOX',
+            },
+          ],
+        });
+      } finally {
+        axios.create = originalCreate;
       }
     },
   );
